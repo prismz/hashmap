@@ -36,10 +36,10 @@ int main(void)
                         "liquid", HM_STRDUP_FUNC("val2"), free);
 
         struct hashmap_item *item4 = new_hashmap_item(
-                        "testkey", HM_STRDUP_FUNC("bruh"), free);
+                        "testkey", HM_STRDUP_FUNC("val3"), free);
 
         struct hashmap_item *item5 = new_hashmap_item(
-                        "testkey2", HM_STRDUP_FUNC("bruh2"), free);
+                        "testkey2", HM_STRDUP_FUNC("val4"), free);
 
         hashmap_insert(hm, item1);
         hashmap_insert(hm, item2);

@@ -37,7 +37,6 @@ struct hashmap {
 struct hashmap_item *new_hashmap_item(const char *key, void *val,
                 void (*val_free_func)(void *));
 struct hashmap *new_hashmap(size_t capacity);
-void free_hashmap_item(struct hashmap_item *item);
 void free_hashmap(struct hashmap *hm);
 uint64_t hm_fnv1a_hash(const char *str);
 int hashmap_insert(struct hashmap *hm, struct hashmap_item *item);

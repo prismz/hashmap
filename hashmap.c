@@ -70,7 +70,7 @@ struct hashmap *new_hashmap(size_t capacity)
         return hm;
 }
 
-void free_hashmap_item(struct hashmap_item *item)
+static void free_hashmap_item(struct hashmap_item *item)
 {
         if (item == NULL)
                 return;

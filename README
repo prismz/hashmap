@@ -30,6 +30,10 @@ hashmap_item_free_func is a macro that will conveniently typecast your function.
 
 Once you have your item, simply call hashmap_insert(map, item).
 
+Retrieving an Item
+------------------
+Simply call hashmap_get(map, key).
+
 Freeing
 -------
 Simply call free_hashmap(map) and everything should be freed recursively.
