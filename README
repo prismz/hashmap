@@ -1,0 +1,35 @@
+hashmap
+-------
+A simple hashmap in C. No license because I don't care enough - do whatever you
+want with it. Uses FNV-1a hash and handles collisions through linked lists.
+Values are simply stored as (void *), which means you can store a pointer
+to whatever you want. Just remember what kind of data you're working with
+and typecast accordingly when retrieving values.
+
+If any issues arise, simply open an issue.
+
+Creating a Hashmap
+------------------
+Simply call new_hashmap(capacity) with the capacity you want. It can be resized,
+but try to pick an appropriate size as resizing is expensive.
+
+Creating and Adding an Item
+---------------------------
+You can create an item with new_hashmap_item().
+If your key is stored in memory, make sure to free it, as new_hashmap_item
+duplicates it. If your values are strings, val_free_func can just be free().
+Otherwise, create a function that frees your struct and use it as follows:
+
+        new_hashmap_item(
+                "key",
+                example_struct,
+                hashmap_item_free_func(struct_free_func)
+        );
+
+hashmap_item_free_func is a macro that will conveniently typecast your function.
+
+Once you have your item, simply call hashmap_insert(map, item).
+
+Freeing
+-------
+Simply call free_hashmap(map) and everything should be freed recursively.
