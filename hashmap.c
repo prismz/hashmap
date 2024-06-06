@@ -141,7 +141,6 @@ static int check_hashmap_capacity(struct hashmap *hm)
 
                 uint64_t hash = hm_fnv1a_hash(item->key);
                 size_t idx = (size_t)(hash % (uint64_t)(hm->capacity + capacity_increase_size));
-                printf("rearranging: idx %ld\n", idx);
                 /* no need to worry about collision
                  * because we implement a linked
                  * list per bucket for this */
@@ -164,8 +163,6 @@ int hashmap_insert(struct hashmap *hm, struct hashmap_item *item)
 
         uint64_t hash = hm_fnv1a_hash(item->key);
         size_t idx = (size_t)(hash % (uint64_t)(hm->capacity));
-
-        printf("inserting at idx %ld\n", idx);
 
         if (hm->items[idx] == NULL) {
                 hm->items[idx] = item;
@@ -192,8 +189,6 @@ void *hashmap_get(struct hashmap *hm, const char *key)
 
         uint64_t hash = hm_fnv1a_hash(key);
         size_t idx = (size_t)(hash % (uint64_t)(hm->capacity));
-
-        printf("key %s hashes to idx %ld\n", key, idx);
 
         struct hashmap_item *item = hm->items[idx];
         if (item == NULL)
