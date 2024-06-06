@@ -205,11 +205,11 @@ int hashmap_insert(struct hashmap *hm, struct hashmap_item *item)
         return idx;
 }
 
-/*
 int hashmap_remove(struct hashmap *hm, const char *key)
 {
+        /* TODO */
+        return -1;
 }
-*/
 
 void *hashmap_get(struct hashmap *hm, const char *key)
 {
@@ -259,5 +259,3 @@ void hashmap_print(struct hashmap *hm)
                 printf("\n");
         }
 }
-
-
