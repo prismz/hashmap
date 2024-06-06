@@ -41,7 +41,8 @@ struct hashmap_item *new_hashmap_item(const char *key, void *val,
         item->val_free_func = val_free_func;
 
         item->next = NULL;
-        item->prev = NULL;
+
+        item->hash = hm_fnv1a_hash(key, strlen(key));
 
         return item;
 }
@@ -76,6 +77,7 @@ static void free_hashmap_item(struct hashmap_item *item)
                 return;
 
         struct hashmap_item *curr;
+        size_t i = 0;
         while (item != NULL) {
                 curr = item;
                 item = item->next;
@@ -83,7 +85,9 @@ static void free_hashmap_item(struct hashmap_item *item)
                 if (curr->val_free_func != NULL)
                         curr->val_free_func(curr->val);
                 free(curr);
+                i++;
         }
+
 }
 
 void free_hashmap(struct hashmap *hm)
@@ -100,35 +104,59 @@ void free_hashmap(struct hashmap *hm)
         free(hm);
 }
 
-uint64_t hm_fnv1a_hash(const char *str)
+#define HASHMAP_HASH_INIT 2166136261u
+uint32_t hm_fnv1a_hash(const char* data, size_t size)
 {
-        if (str == NULL)
-                return 0;
+	size_t nblocks = size / 8;
+	uint64_t hash = HASHMAP_HASH_INIT;
+	for (size_t i = 0; i < nblocks; ++i)
+	{
+		hash ^= (uint64_t)data[0] << 0 | (uint64_t)data[1] << 8 |
+			 (uint64_t)data[2] << 16 | (uint64_t)data[3] << 24 |
+			 (uint64_t)data[4] << 32 | (uint64_t)data[5] << 40 |
+			 (uint64_t)data[6] << 48 | (uint64_t)data[7] << 56;
+		hash *= 0xbf58476d1ce4e5b9;
+		data += 8;
+	}
 
-        uint64_t hash = HM_FNV_OFFSET;
-        for (const char *p = str; *p; p++) {
-                hash ^= (uint64_t)(unsigned char)(*p);
-                hash *= HM_FNV_PRIME;
-        }
+	uint64_t last = size & 0xff;
+	switch (size % 8)
+	{
+	case 7:
+		last |= (uint64_t)data[6] << 56; /* fallthrough */
+	case 6:
+		last |= (uint64_t)data[5] << 48; /* fallthrough */
+	case 5:
+		last |= (uint64_t)data[4] << 40; /* fallthrough */
+	case 4:
+		last |= (uint64_t)data[3] << 32; /* fallthrough */
+	case 3:
+		last |= (uint64_t)data[2] << 24; /* fallthrough */
+	case 2:
+		last |= (uint64_t)data[1] << 16; /* fallthrough */
+	case 1:
+		last |= (uint64_t)data[0] << 8;
+		hash ^= last;
+		hash *= 0xd6e8feb86659fd93;
+	}
 
-        return hash;
+	// compress to a 32-bit result.
+	// also serves as a finalizer.
+	return (uint32_t)(hash ^ hash >> 32);
 }
 
 static int check_hashmap_capacity(struct hashmap *hm)
 {
         if (hm == NULL)
                 return 1;
-
         if (hm->n + 1 < hm->capacity)
                 return 0;
 
-        int capacity_increase_size = 8;
+        size_t increase_value = 8;
+        size_t new_size = hm->capacity + increase_value;
 
-        struct hashmap_item **items = HM_CALLOC_FUNC(
-                        hm->capacity + capacity_increase_size,
-                        sizeof(struct hashmap_item *)
-        );
-
+        struct hashmap_item **items = HM_CALLOC_FUNC(hm->capacity + increase_value,
+                        sizeof(struct hashmap_item *));
         if (hm_check_mem(items))
                 return 1;
 
@@ -136,20 +164,13 @@ static int check_hashmap_capacity(struct hashmap *hm)
                 struct hashmap_item *item = hm->items[i];
                 if (item == NULL)
                         continue;
-                if (item->key == NULL)
-                        continue;
 
-                uint64_t hash = hm_fnv1a_hash(item->key);
-                size_t idx = (size_t)(hash % (uint64_t)(hm->capacity + capacity_increase_size));
-                /* no need to worry about collision
-                 * because we implement a linked
-                 * list per bucket for this */
-                items[idx] = item;
+                items[item->hash % (uint32_t)(hm->capacity)] = item;
         }
-
-        hm->capacity += capacity_increase_size;
         free(hm->items);
         hm->items = items;
+        hm->capacity = new_size;
+
         return 0;
 }
 
@@ -161,8 +182,10 @@ int hashmap_insert(struct hashmap *hm, struct hashmap_item *item)
         if (check_hashmap_capacity(hm))
                 return -1;
 
-        uint64_t hash = hm_fnv1a_hash(item->key);
-        size_t idx = (size_t)(hash % (uint64_t)(hm->capacity));
+        size_t idx = (size_t)(item->hash % (uint32_t)(hm->capacity));
+
+        /*printf("insert key %s at idx %ld with cap of %ld\n",
+                        item->key, idx, hm->capacity); */
 
         if (hm->items[idx] == NULL) {
                 hm->items[idx] = item;
@@ -176,19 +199,25 @@ int hashmap_insert(struct hashmap *hm, struct hashmap_item *item)
                 target_bucket = target_bucket->next;
 
         target_bucket->next = item;
-        item->prev = target_bucket;
         item->next = NULL;
+        hm->n++;
 
         return idx;
 }
+
+/*
+int hashmap_remove(struct hashmap *hm, const char *key)
+{
+}
+*/
 
 void *hashmap_get(struct hashmap *hm, const char *key)
 {
         if (hm == NULL || key == NULL)
                 return NULL;
 
-        uint64_t hash = hm_fnv1a_hash(key);
-        size_t idx = (size_t)(hash % (uint64_t)(hm->capacity));
+        uint32_t hash = hm_fnv1a_hash(key, strlen(key));
+        size_t idx = (size_t)(hash % (uint32_t)(hm->capacity));
 
         struct hashmap_item *item = hm->items[idx];
         if (item == NULL)
@@ -208,3 +237,27 @@ void *hashmap_get(struct hashmap *hm, const char *key)
 
         return NULL;
 }
+
+/* only for maps with strings as values */
+void hashmap_print(struct hashmap *hm)
+{
+        printf("%ld entries of cap %ld\n", hm->n, hm->capacity);
+        for (size_t i = 0; i < hm->capacity; i++) {
+                struct hashmap_item *item = hm->items[i];
+                printf("%02ld: ", i);
+                if (item == NULL) {
+                        printf("NULL\n");
+                        continue;
+                }
+
+                struct hashmap_item *curr;
+                while (item != NULL) {
+                        curr = item;
+                        item = item->next;
+                        printf("%s=%s ", curr->key, (char *)curr->val);
+                }
+                printf("\n");
+        }
+}
+
+

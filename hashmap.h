@@ -21,11 +21,12 @@
 struct hashmap_item;
 struct hashmap_item {
         char *key;
+        uint32_t hash;
         void *val;
         void (*val_free_func)(void *);
 
         /* linked list to store collisions */
-        struct hashmap_item *next, *prev;
+        struct hashmap_item *next;
 };
 
 struct hashmap {
@@ -38,8 +39,10 @@ struct hashmap_item *new_hashmap_item(const char *key, void *val,
                 void (*val_free_func)(void *));
 struct hashmap *new_hashmap(size_t capacity);
 void free_hashmap(struct hashmap *hm);
-uint64_t hm_fnv1a_hash(const char *str);
+uint32_t hm_fnv1a_hash(const char *str, size_t size);
 int hashmap_insert(struct hashmap *hm, struct hashmap_item *item);
+int hashmap_remove(struct hashmap *hm, const char *key);
 void *hashmap_get(struct hashmap *hm, const char *key);
+void hashmap_print(struct hashmap *hm);
 
 #endif  /* HASHMAP_H */
