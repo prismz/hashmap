@@ -4,6 +4,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
+
+#ifdef HM_DEBUG
+#include <stdarg.h>
+static void debug_print(char *fmt, ...)
+{
+        va_list ap;
+        va_start(ap, fmt);
+        vprintf(fmt, ap);
+        va_end(ap);
+}
+#else
+/* compiler should just optimize this away */
+static void debug_print()
+{
+}
+#endif
 
 static int hm_check_mem(void *ptr)
 {
@@ -18,197 +35,188 @@ static int hm_check_mem(void *ptr)
         return 1;
 }
 
-/* will duplicate key, but not val */
-struct hashmap_item *new_hashmap_item(const char *key, void *val,
-                void (*val_free_func)(void *))
+/* hash a single byte */
+static uint32_t fnv1a(unsigned char byte, uint32_t hash)
+{
+        return (byte ^ hash) * HM_FNV_PRIME;
+}
+
+static uint32_t hm_fnv1a_hash(const char *str)
+{
+        uint32_t hash = HM_FNV_SEED;
+        while (*str)
+                hash = fnv1a((unsigned char)*str++, hash);
+        return hash;
+}
+
+/* will duplicate key */
+struct bucket *new_bucket(const char *key, void *val, void (*val_free_func)(void *))
 {
         if (key == NULL || val == NULL)
                 return NULL;
 
-        struct hashmap_item *item = HM_CALLOC_FUNC(1,
-                        sizeof(struct hashmap_item));
-
-        if (hm_check_mem(item))
+        struct bucket *b = HM_CALLOC_FUNC(1, sizeof(struct bucket));
+        if (hm_check_mem(b))
                 return NULL;
 
-        item->key = HM_STRDUP_FUNC(key);
-        if (hm_check_mem(item)) {
-                free(item);
+        b->key = HM_STRDUP_FUNC(key);
+        if (hm_check_mem(b->key)) {
+                free(b);
                 return NULL;
         }
 
-        item->val = val;
-        item->val_free_func = val_free_func;
+        b->val = val;
+        b->val_free_func = val_free_func;
+        b->next = NULL;
 
-        item->next = NULL;
+        b->hash = hm_fnv1a_hash(key);
 
-        item->hash = hm_fnv1a_hash(key, strlen(key));
+        debug_print("creating bucket with key %s, hash of this key is %" PRIu32 "\n",
+                        key, b->hash);
 
-        return item;
+        return b;
 }
 
-struct hashmap *new_hashmap(size_t capacity)
+struct hashmap *new_hashmap(void)
 {
-        if (capacity == 0)
-                return NULL;
+        /* Any smaller and we'd pretty much instantly have to resize */
+        size_t capacity = HM_DEFAULT_HASHMAP_SIZE;
+
+        debug_print("creating hashmap with capacity %ld\n", capacity);
 
         struct hashmap *hm = HM_CALLOC_FUNC(1, sizeof(struct hashmap));
         if (hm_check_mem(hm))
                 return NULL;
 
-        struct hashmap_item **items = HM_CALLOC_FUNC(capacity,
-                        sizeof(struct hashmap_item *));
-
-        if (hm_check_mem(items)) {
+        hm->capacity = capacity;
+        hm->n_buckets = 0;
+        hm->buckets = HM_CALLOC_FUNC(capacity, sizeof(struct bucket *));
+        if (hm_check_mem(hm->buckets)) {
                 free(hm);
                 return NULL;
         }
 
-        hm->capacity = capacity;
-        hm->n = 0;
-        hm->items = items;
-
         return hm;
 }
 
-static void free_hashmap_item(struct hashmap_item *item)
+void free_bucket(struct bucket *b)
 {
-        if (item == NULL)
+        if (b == NULL)
                 return;
 
-        struct hashmap_item *curr;
-        size_t i = 0;
-        while (item != NULL) {
-                curr = item;
-                item = item->next;
+        struct bucket *curr;
+        while (b != NULL) {
+                curr = b;
+                b = b->next;
+
                 free(curr->key);
                 if (curr->val_free_func != NULL)
                         curr->val_free_func(curr->val);
                 free(curr);
-                i++;
         }
-
 }
 
 void free_hashmap(struct hashmap *hm)
 {
         if (hm == NULL)
                 return;
-
         for (size_t i = 0; i < hm->capacity; i++) {
-                if (hm->items[i] == NULL)
+                if (hm->buckets[i] == NULL)
                         continue;
-                free_hashmap_item(hm->items[i]);
+                free_bucket(hm->buckets[i]);
         }
-        free(hm->items);
+        free(hm->buckets);
         free(hm);
 }
 
-#define HASHMAP_HASH_INIT 2166136261u
-uint32_t hm_fnv1a_hash(const char* data, size_t size)
-{
-	size_t nblocks = size / 8;
-	uint64_t hash = HASHMAP_HASH_INIT;
-	for (size_t i = 0; i < nblocks; ++i)
-	{
-		hash ^= (uint64_t)data[0] << 0 | (uint64_t)data[1] << 8 |
-			 (uint64_t)data[2] << 16 | (uint64_t)data[3] << 24 |
-			 (uint64_t)data[4] << 32 | (uint64_t)data[5] << 40 |
-			 (uint64_t)data[6] << 48 | (uint64_t)data[7] << 56;
-		hash *= 0xbf58476d1ce4e5b9;
-		data += 8;
-	}
-
-	uint64_t last = size & 0xff;
-	switch (size % 8)
-	{
-	case 7:
-		last |= (uint64_t)data[6] << 56; /* fallthrough */
-	case 6:
-		last |= (uint64_t)data[5] << 48; /* fallthrough */
-	case 5:
-		last |= (uint64_t)data[4] << 40; /* fallthrough */
-	case 4:
-		last |= (uint64_t)data[3] << 32; /* fallthrough */
-	case 3:
-		last |= (uint64_t)data[2] << 24; /* fallthrough */
-	case 2:
-		last |= (uint64_t)data[1] << 16; /* fallthrough */
-	case 1:
-		last |= (uint64_t)data[0] << 8;
-		hash ^= last;
-		hash *= 0xd6e8feb86659fd93;
-	}
-
-	// compress to a 32-bit result.
-	// also serves as a finalizer.
-	return (uint32_t)(hash ^ hash >> 32);
-}
-
-static int check_hashmap_capacity(struct hashmap *hm)
+int hashmap_resize(struct hashmap *hm)
 {
         if (hm == NULL)
-                return 1;
-        if (hm->n + 1 < hm->capacity)
-                return 0;
+                return -1;
 
-        size_t increase_value = 8;
-        size_t new_size = hm->capacity + increase_value;
-
-        struct hashmap_item **items = HM_CALLOC_FUNC(hm->capacity + increase_value,
-                        sizeof(struct hashmap_item *));
-        if (hm_check_mem(items))
+        size_t new_size = hm->capacity * HM_RESIZE_SCALE_FACTOR;
+        debug_print("resizing hashmap from size %ld to %ld...\n", hm->capacity,
+                        new_size);
+        struct bucket **buckets = HM_CALLOC_FUNC(new_size,
+                        sizeof(struct bucket *));
+        if (hm_check_mem(buckets))
                 return 1;
 
         for (size_t i = 0; i < hm->capacity; i++) {
-                struct hashmap_item *item = hm->items[i];
-                if (item == NULL)
+                if (hm->buckets[i] == NULL)
                         continue;
 
-                items[item->hash % (uint32_t)(hm->capacity)] = item;
+                size_t new_idx = hm->buckets[i]->hash % (uint32_t)new_size;
+                debug_print("buckets at idx %ld move to idx %ld\n", i, new_idx);
+                buckets[new_idx] = hm->buckets[i];
         }
-        free(hm->items);
-        hm->items = items;
+
+        free(hm->buckets);
+        hm->buckets = buckets;
         hm->capacity = new_size;
 
         return 0;
 }
 
-int hashmap_insert(struct hashmap *hm, struct hashmap_item *item)
+static int bucket_append(struct bucket *head, struct bucket *to_append)
 {
-        if (hm == NULL || item == NULL)
-                return -1;
+        if (head == NULL || to_append == NULL)
+                return 1;
 
-        if (check_hashmap_capacity(hm))
-                return -1;
+        while (head->next != NULL)
+                head = head->next;
 
-        size_t idx = (size_t)(item->hash % (uint32_t)(hm->capacity));
+        head->next = to_append;
+        to_append->next = NULL;
 
-        /*printf("insert key %s at idx %ld with cap of %ld\n",
-                        item->key, idx, hm->capacity); */
-
-        if (hm->items[idx] == NULL) {
-                hm->items[idx] = item;
-                hm->n++;
-                return idx;
-        }
-
-        /* collision, handle linked list */
-        struct hashmap_item *target_bucket = hm->items[idx];
-        while (target_bucket->next != NULL)
-                target_bucket = target_bucket->next;
-
-        target_bucket->next = item;
-        item->next = NULL;
-        hm->n++;
-
-        return idx;
+        return 0;
 }
 
-int hashmap_remove(struct hashmap *hm, const char *key)
+int hashmap_insert(struct hashmap *hm, struct bucket *b)
 {
-        /* TODO */
-        return -1;
+        if ((float)(hm->n_buckets + 1) >
+                        (HM_HASHMAP_MAX_LOAD * (float)hm->capacity)) {
+                debug_print("resize required... calling resize function\n");
+                if (hashmap_resize(hm))
+                        return -1;
+        }
+
+        size_t idx = (b->hash) % (uint32_t)(hm->capacity);
+        debug_print("insert: bucket with key %s goes to idx %ld\n", b->key, idx);
+
+        hm->n_buckets++;
+
+        struct bucket *target_bucket = hm->buckets[idx];
+        if (target_bucket == NULL) {
+                debug_print("no collision - inserting\n");
+                hm->buckets[idx] = b;
+                return 0;
+        }
+
+        /* store original location */
+
+        /* changing value of something already in the hashmap */
+        struct bucket *curr;
+        while (target_bucket != NULL) {
+                curr = target_bucket;
+                target_bucket = target_bucket->next;
+                if (strcmp(curr->key, b->key) == 0) {
+                        debug_print("key already exists, reassigning value\n");
+                        if (curr->val_free_func != NULL)
+                                curr->val_free_func(curr->val);
+                        curr->val = b->val;
+                        b->val_free_func = NULL;
+                        free_bucket(b);
+                        return 0;
+                }
+        }
+
+        debug_print("collision. appending to linked list\n");
+
+        target_bucket = hm->buckets[idx];
+        bucket_append(target_bucket, b);
+
+        return 0;
 }
 
 void *hashmap_get(struct hashmap *hm, const char *key)
@@ -216,46 +224,181 @@ void *hashmap_get(struct hashmap *hm, const char *key)
         if (hm == NULL || key == NULL)
                 return NULL;
 
-        uint32_t hash = hm_fnv1a_hash(key, strlen(key));
-        size_t idx = (size_t)(hash % (uint32_t)(hm->capacity));
+        uint32_t hash = hm_fnv1a_hash(key);
+        size_t idx = hash % (uint32_t)(hm->capacity);
+        debug_print(
+                "retreiving object with key %s - hashes to %" PRIu32 " giving idx %ld\n",
+                key, hash, idx
+        );
 
-        struct hashmap_item *item = hm->items[idx];
-        if (item == NULL)
+        struct bucket *target_bucket = hm->buckets[idx];
+        if (target_bucket == NULL)
                 return NULL;
 
-        if (strcmp(item->key, key) == 0)
-                return item->val;
+        if (strcmp(target_bucket->key, key) == 0)
+                return target_bucket->val;
 
-        /* not in the first bucket, iterate through linked list */
-        struct hashmap_item *curr;
-        while (item != NULL) {
-                curr = item;
-                item = item->next;
+        /* collision */
+        struct bucket *curr;
+        while (target_bucket != NULL) {
+                curr = target_bucket;
+                target_bucket = target_bucket->next;
                 if (strcmp(curr->key, key) == 0)
                         return curr->val;
+        }
+
+        /* search all items as a last resort */
+        for (size_t i = 0; i < hm->capacity; i++) {
+                struct bucket *b = hm->buckets[i];
+                struct bucket *curr;
+                while (b != NULL) {
+                        curr = b;
+                        b = b->next;
+
+                        if (strcmp(curr->key, key) == 0)
+                                return curr->val;
+                }
         }
 
         return NULL;
 }
 
-/* only for maps with strings as values */
-void hashmap_print(struct hashmap *hm)
+/*
+ * wrapper function, so that if we don't find it with normal
+ * methods, we can easily re-call the function with a custom index, allowing
+ * us to iterate through the hashmap to find the item if for some
+ * reason the hash gives an incorrect index
+ */
+static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
+                size_t idx)
 {
-        printf("%ld entries of cap %ld\n", hm->n, hm->capacity);
-        for (size_t i = 0; i < hm->capacity; i++) {
-                struct hashmap_item *item = hm->items[i];
-                printf("%02ld: ", i);
-                if (item == NULL) {
-                        printf("NULL\n");
+        if (hm == NULL || key == NULL)
+                return 1;
+
+        //uint32_t hash = hm_fnv1a_hash(key);
+        //size_t idx = hash % (uint32_t)(hm->capacity);
+
+        debug_print(
+                "removing object with key %s which hashes to %" PRIu32
+                ". Supplied index to search is %ld\n",
+                key, hash, idx
+        );
+
+        struct bucket *target = hm->buckets[idx];
+        if (target == NULL)
+                return 1;
+
+        if (strcmp(target->key, key) == 0) {
+                /* bucket with single item */
+                if (target->next == NULL) {
+                        debug_print("simple removal of bucket with single node\n");
+                        free_bucket(hm->buckets[idx]);
+                        hm->buckets[idx] = NULL;
+                        return 0;
+                }
+
+                /* bucket where first item is to be removed,
+                 * but there are other items in the linked list */
+
+                debug_print("removing first node and preserving the rest of the linked list\n");
+
+                struct bucket **next_addr = &(hm->buckets[idx]->next);
+                hm->buckets[idx] = *next_addr;
+                target->next = NULL;
+                free_bucket(target);
+                return 0;
+        }
+
+        /* the bucket to be removed is not the first
+         * bucket in the linked list */
+        debug_print("bucket to be removed is within the linked list - searching...\n");
+        struct bucket *curr = target;
+        struct bucket *prev = NULL;
+
+        while (target != NULL) {
+                curr = target;
+                target = target->next;
+
+                if (strcmp(curr->key, key) != 0) {
+                        prev = curr;
                         continue;
                 }
 
-                struct hashmap_item *curr;
-                while (item != NULL) {
-                        curr = item;
-                        item = item->next;
-                        printf("%s=%s ", curr->key, (char *)curr->val);
+                if (prev == NULL) {
+                        debug_print("this should never happen...\n");
+                        return 1;
                 }
-                printf("\n");
+
+                prev->next = curr->next;
+                curr->next = NULL;
+                free_bucket(curr);
+
+                return 0;
+        }
+
+        /* if by this point we're still executing,
+         * that means the item couldn't be found at the
+         * correct index - we must iterate. */
+
+        return 1;
+}
+
+int hashmap_remove(struct hashmap *hm, const char *key)
+{
+        if (hm == NULL || key == NULL)
+                return 1;
+
+        uint32_t hash = hm_fnv1a_hash(key);
+        size_t idx = hash % (uint32_t)(hm->capacity);
+
+        if (_hashmap_remove(hm, key, hash, idx) == 0)
+                return 0;
+
+        debug_print("couldn't find item to remove by hashing, must search entire hashmap\n");
+        for (size_t i = 0; i < hm->capacity; i++) {
+                if (hm->buckets[i] == NULL)
+                        continue;
+
+                if (_hashmap_remove(hm, key, hash, i) == 0) {
+                        debug_print("successfully found and removed item at idx %ld\n", i);
+                        return 0;
+                }
+
+        }
+
+        debug_print("couldn't find item to remove anywhere, returning 1\n");
+        return 1;
+}
+
+#ifdef HM_DEBUG
+/* only works for hashmap with strings as values */
+void print_hashmap(struct hashmap *hm)
+{
+        if (hm == NULL) {
+                printf("NULL\n");
+                return;
+        }
+
+        printf("Printing hashmap containing %ld buckets with capacity %ld:\n",
+                        hm->n_buckets, hm->capacity);
+
+        for (size_t i = 0; i < hm->capacity; i++) {
+                struct bucket *target = hm->buckets[i];
+                printf("bucket %02ld:\n", i);
+                if (target == NULL)
+                        continue;
+
+                struct bucket *curr;
+                int n = 0;
+                while (target != NULL) {
+                        curr = target;
+                        target = target->next;
+                        printf("    %02d: %s=%s\n", n,
+                                        curr->key, (char *)curr->val);
+
+                        n++;
+                }
+
         }
 }
+#endif
