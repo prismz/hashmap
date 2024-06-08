@@ -294,6 +294,7 @@ static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
                         debug_print("simple removal of bucket with single node\n");
                         free_bucket(hm->buckets[idx]);
                         hm->buckets[idx] = NULL;
+                        hm->n_buckets--;
                         return 0;
                 }
 
