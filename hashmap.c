@@ -193,8 +193,6 @@ int hashmap_insert(struct hashmap *hm, struct bucket *b)
                 return 0;
         }
 
-        /* store original location */
-
         /* changing value of something already in the hashmap */
         struct bucket *curr;
         while (target_bucket != NULL) {
@@ -364,7 +362,6 @@ int hashmap_remove(struct hashmap *hm, const char *key)
                         debug_print("successfully found and removed item at idx %ld\n", i);
                         return 0;
                 }
-
         }
 
         debug_print("couldn't find item to remove anywhere, returning 1\n");
