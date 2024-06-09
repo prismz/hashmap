@@ -12,27 +12,13 @@ If any issues arise, simply open an issue.
 
 Creating a Hashmap
 ------------------
-Call new_hashmap().
+Call hashmap_new(val_free_func).
+val_free_func is should be a function that frees your values.
+Use the macro hashmap_item_free_func() on your function to typecast it.
 
-Creating and Adding an Item (Bucket)
+Creating and Adding an Item
 ------------------------------------
-You can create an item with new_bucket("key", val, val_free_func).
-If your key is stored in memory, make sure to free it, as new_bucket()
-duplicates it. If your values are strings, val_free_func can just be free().
-Otherwise, create a function that frees your struct and use it as follows:
-
-        new_bucket(
-                "key",
-                example_struct,
-                hashmap_item_free_func(struct_free_func)
-        );
-
-hashmap_item_free_func is a macro that will conveniently typecast your function.
-
-If you just want to store your value and not have it be freed with the hashmap,
-make val_free_func NULL.
-
-Once you have your item, simply call hashmap_insert(map, bucket).
+hashmap_insert(map, "key", value).
 
 Retrieving an Item
 ------------------
@@ -44,4 +30,8 @@ Call hashmap_remove(map, key);
 
 Freeing
 -------
-Simply call free_hashmap(map) and everything should be freed recursively.
+Simply call hashmap_free(map) and everything should be freed recursively.
+
+Return Values
+-------------
+Functions return 0 on success, and 1 on error.

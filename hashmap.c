@@ -41,7 +41,7 @@ static uint32_t fnv1a(unsigned char byte, uint32_t hash)
         return (byte ^ hash) * HM_FNV_PRIME;
 }
 
-static uint32_t hm_fnv1a_hash(const char *str)
+static uint32_t fnv1a_hash(const char *str)
 {
         uint32_t hash = HM_FNV_SEED;
         while (*str)
@@ -50,9 +50,9 @@ static uint32_t hm_fnv1a_hash(const char *str)
 }
 
 /* will duplicate key */
-struct bucket *new_bucket(const char *key, void *val, void (*val_free_func)(void *))
+static struct bucket *new_bucket(const char *key, void *val)
 {
-        if (key == NULL || val == NULL)
+        if (key == NULL)
                 return NULL;
 
         struct bucket *b = HM_CALLOC_FUNC(1, sizeof(struct bucket));
@@ -66,10 +66,9 @@ struct bucket *new_bucket(const char *key, void *val, void (*val_free_func)(void
         }
 
         b->val = val;
-        b->val_free_func = val_free_func;
         b->next = NULL;
 
-        b->hash = hm_fnv1a_hash(key);
+        b->hash = fnv1a_hash(key);
 
         debug_print("creating bucket with key %s, hash of this key is %" PRIu32 "\n",
                         key, b->hash);
@@ -77,7 +76,7 @@ struct bucket *new_bucket(const char *key, void *val, void (*val_free_func)(void
         return b;
 }
 
-struct hashmap *new_hashmap(void)
+struct hashmap *hashmap_new(void (*val_free_func)(void *))
 {
         /* Any smaller and we'd pretty much instantly have to resize */
         size_t capacity = HM_DEFAULT_HASHMAP_SIZE;
@@ -90,6 +89,7 @@ struct hashmap *new_hashmap(void)
 
         hm->capacity = capacity;
         hm->n_buckets = 0;
+        hm->val_free_func = val_free_func;
         hm->buckets = HM_CALLOC_FUNC(capacity, sizeof(struct bucket *));
         if (hm_check_mem(hm->buckets)) {
                 free(hm);
@@ -99,7 +99,7 @@ struct hashmap *new_hashmap(void)
         return hm;
 }
 
-void free_bucket(struct bucket *b)
+static void free_bucket(struct bucket *b, void (*val_free_func)(void *))
 {
         if (b == NULL)
                 return;
@@ -110,20 +110,20 @@ void free_bucket(struct bucket *b)
                 b = b->next;
 
                 free(curr->key);
-                if (curr->val_free_func != NULL)
-                        curr->val_free_func(curr->val);
+                if (val_free_func != NULL && curr->val != NULL)
+                        val_free_func(curr->val);
                 free(curr);
         }
 }
 
-void free_hashmap(struct hashmap *hm)
+void hashmap_free(struct hashmap *hm)
 {
         if (hm == NULL)
                 return;
         for (size_t i = 0; i < hm->capacity; i++) {
                 if (hm->buckets[i] == NULL)
                         continue;
-                free_bucket(hm->buckets[i]);
+                free_bucket(hm->buckets[i], hm->val_free_func);
         }
         free(hm->buckets);
         free(hm);
@@ -148,6 +148,11 @@ int hashmap_resize(struct hashmap *hm)
 
                 size_t new_idx = hm->buckets[i]->hash % (uint32_t)new_size;
                 debug_print("buckets at idx %ld move to idx %ld\n", i, new_idx);
+                if (buckets[new_idx] != NULL) {
+                        debug_print("collision when resizing hashmap. this should never happen...\n");
+                        free(buckets);
+                        return 1;
+                }
                 buckets[new_idx] = hm->buckets[i];
         }
 
@@ -158,22 +163,11 @@ int hashmap_resize(struct hashmap *hm)
         return 0;
 }
 
-static int bucket_append(struct bucket *head, struct bucket *to_append)
+int hashmap_insert(struct hashmap *hm, const char *key, void *val)
 {
-        if (head == NULL || to_append == NULL)
+        if (hm == NULL || key == NULL)
                 return 1;
 
-        while (head->next != NULL)
-                head = head->next;
-
-        head->next = to_append;
-        to_append->next = NULL;
-
-        return 0;
-}
-
-int hashmap_insert(struct hashmap *hm, struct bucket *b)
-{
         if ((float)(hm->n_buckets + 1) >
                         (HM_HASHMAP_MAX_LOAD * (float)hm->capacity)) {
                 debug_print("resize required... calling resize function\n");
@@ -181,14 +175,15 @@ int hashmap_insert(struct hashmap *hm, struct bucket *b)
                         return -1;
         }
 
-        size_t idx = (b->hash) % (uint32_t)(hm->capacity);
-        debug_print("insert: bucket with key %s goes to idx %ld\n", b->key, idx);
-
         hm->n_buckets++;
+        struct bucket *b = new_bucket(key, val);
+        if (hm_check_mem(b))
+                return 1;
+        size_t idx = (b->hash) % (uint32_t)(hm->capacity);
 
         struct bucket *target_bucket = hm->buckets[idx];
         if (target_bucket == NULL) {
-                debug_print("no collision - inserting\n");
+                debug_print("insert: bucket with key %s goes to idx %ld\n", b->key, idx);
                 hm->buckets[idx] = b;
                 return 0;
         }
@@ -198,13 +193,15 @@ int hashmap_insert(struct hashmap *hm, struct bucket *b)
         while (target_bucket != NULL) {
                 curr = target_bucket;
                 target_bucket = target_bucket->next;
-                if (strcmp(curr->key, b->key) == 0) {
+                if (curr->hash == b->hash && strcmp(curr->key, key) == 0) {
                         debug_print("key already exists, reassigning value\n");
-                        if (curr->val_free_func != NULL)
-                                curr->val_free_func(curr->val);
-                        curr->val = b->val;
-                        b->val_free_func = NULL;
-                        free_bucket(b);
+
+                        /* we free the old value, should probably add an
+                         * option for this */
+                        if (hm->val_free_func != NULL)
+                                hm->val_free_func(curr->val);
+                        curr->val = val;
+                        free_bucket(b, NULL);
                         return 0;
                 }
         }
@@ -212,7 +209,12 @@ int hashmap_insert(struct hashmap *hm, struct bucket *b)
         debug_print("collision. appending to linked list\n");
 
         target_bucket = hm->buckets[idx];
-        bucket_append(target_bucket, b);
+
+        while (target_bucket->next != NULL)
+                target_bucket = target_bucket->next;
+
+        target_bucket->next = b;
+        b->next = NULL;
 
         return 0;
 }
@@ -222,7 +224,7 @@ void *hashmap_get(struct hashmap *hm, const char *key)
         if (hm == NULL || key == NULL)
                 return NULL;
 
-        uint32_t hash = hm_fnv1a_hash(key);
+        uint32_t hash = fnv1a_hash(key);
         size_t idx = hash % (uint32_t)(hm->capacity);
         debug_print(
                 "retreiving object with key %s - hashes to %" PRIu32 " giving idx %ld\n",
@@ -233,7 +235,7 @@ void *hashmap_get(struct hashmap *hm, const char *key)
         if (target_bucket == NULL)
                 return NULL;
 
-        if (strcmp(target_bucket->key, key) == 0)
+        if (target_bucket->hash == hash && strcmp(target_bucket->key, key) == 0)
                 return target_bucket->val;
 
         /* collision */
@@ -241,10 +243,11 @@ void *hashmap_get(struct hashmap *hm, const char *key)
         while (target_bucket != NULL) {
                 curr = target_bucket;
                 target_bucket = target_bucket->next;
-                if (strcmp(curr->key, key) == 0)
+                if (curr->hash == hash && strcmp(curr->key, key) == 0)
                         return curr->val;
         }
 
+#ifdef HM_DONTTRUSTHASH
         /* search all items as a last resort */
         for (size_t i = 0; i < hm->capacity; i++) {
                 struct bucket *b = hm->buckets[i];
@@ -253,10 +256,11 @@ void *hashmap_get(struct hashmap *hm, const char *key)
                         curr = b;
                         b = b->next;
 
-                        if (strcmp(curr->key, key) == 0)
+                        if (curr->hash == hash && strcmp(curr->key, key) == 0)
                                 return curr->val;
                 }
         }
+#endif
 
         return NULL;
 }
@@ -273,7 +277,7 @@ static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
         if (hm == NULL || key == NULL)
                 return 1;
 
-        //uint32_t hash = hm_fnv1a_hash(key);
+        //uint32_t hash = fnv1a_hash(key);
         //size_t idx = hash % (uint32_t)(hm->capacity);
 
         debug_print(
@@ -286,11 +290,11 @@ static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
         if (target == NULL)
                 return 1;
 
-        if (strcmp(target->key, key) == 0) {
+        if (target->hash == hash && strcmp(target->key, key) == 0) {
                 /* bucket with single item */
                 if (target->next == NULL) {
                         debug_print("simple removal of bucket with single node\n");
-                        free_bucket(hm->buckets[idx]);
+                        free_bucket(hm->buckets[idx], hm->val_free_func);
                         hm->buckets[idx] = NULL;
                         hm->n_buckets--;
                         return 0;
@@ -298,27 +302,32 @@ static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
 
                 /* bucket where first item is to be removed,
                  * but there are other items in the linked list */
-
                 debug_print("removing first node and preserving the rest of the linked list\n");
 
-                struct bucket **next_addr = &(hm->buckets[idx]->next);
-                hm->buckets[idx] = *next_addr;
+                struct bucket *next = hm->buckets[idx]->next;
+                hm->buckets[idx] = next;
                 target->next = NULL;
-                free_bucket(target);
+                free_bucket(target, hm->val_free_func);
                 return 0;
         }
 
         /* the bucket to be removed is not the first
          * bucket in the linked list */
         debug_print("bucket to be removed is within the linked list - searching...\n");
+        if (target->next == NULL)
+                return 1;
+
+        target = target->next;
+
         struct bucket *curr = target;
         struct bucket *prev = NULL;
+
 
         while (target != NULL) {
                 curr = target;
                 target = target->next;
 
-                if (strcmp(curr->key, key) != 0) {
+                if (curr->hash == hash && strcmp(curr->key, key) != 0) {
                         prev = curr;
                         continue;
                 }
@@ -330,14 +339,10 @@ static int _hashmap_remove(struct hashmap *hm, const char *key, uint32_t hash,
 
                 prev->next = curr->next;
                 curr->next = NULL;
-                free_bucket(curr);
+                free_bucket(curr, hm->val_free_func);
 
                 return 0;
         }
-
-        /* if by this point we're still executing,
-         * that means the item couldn't be found at the
-         * correct index - we must iterate. */
 
         return 1;
 }
@@ -347,15 +352,17 @@ int hashmap_remove(struct hashmap *hm, const char *key)
         if (hm == NULL || key == NULL)
                 return 1;
 
-        uint32_t hash = hm_fnv1a_hash(key);
+        uint32_t hash = fnv1a_hash(key);
         size_t idx = hash % (uint32_t)(hm->capacity);
 
         if (_hashmap_remove(hm, key, hash, idx) == 0)
                 return 0;
 
+#ifdef HM_DONTTRUSTHASH
         debug_print("couldn't find item to remove by hashing, must search entire hashmap\n");
         for (size_t i = 0; i < hm->capacity; i++) {
-                if (hm->buckets[i] == NULL)
+                /* skip if we already processed the index or if the item is NULL */
+                if (hm->buckets[i] == NULL || i == idx)
                         continue;
 
                 if (_hashmap_remove(hm, key, hash, i) == 0) {
@@ -365,12 +372,13 @@ int hashmap_remove(struct hashmap *hm, const char *key)
         }
 
         debug_print("couldn't find item to remove anywhere, returning 1\n");
+#endif
+
         return 1;
 }
 
-#ifdef HM_DEBUG
 /* only works for hashmap with strings as values */
-void print_hashmap(struct hashmap *hm)
+void hashmap_print(struct hashmap *hm)
 {
         if (hm == NULL) {
                 printf("NULL\n");
@@ -399,4 +407,3 @@ void print_hashmap(struct hashmap *hm)
 
         }
 }
-#endif

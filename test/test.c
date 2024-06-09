@@ -2,35 +2,33 @@
 
 #include <stdio.h>
 
+/* TODO: proper unit tests */
 int main(void)
 {
-        struct hashmap *hm = new_hashmap();
+        struct hashmap *hm = hashmap_new(free);
 
         char *ptr1 = HM_STRDUP_FUNC("value1");
         char *ptr2 = HM_STRDUP_FUNC("value2");
+        char *ptr3 = HM_STRDUP_FUNC("this should be the final value");
 
-        struct bucket *b1 = new_bucket("costarring", ptr1, free);
-        struct bucket *b2 = new_bucket("liquid", ptr2, free);
-        struct bucket *b3 = new_bucket("ll3", HM_STRDUP_FUNC(
-                                "this should be the final value"), free);
-        hashmap_insert(hm, b1);
-        hashmap_insert(hm, b2);
-        hm->buckets[3] = b3;
+        hashmap_insert(hm, "costarring", ptr1);
+        hashmap_insert(hm, "liquid", ptr2);
+        hashmap_insert(hm, "liquid", ptr3);
 
         //struct bucket *dup = duplicate_bucket(hm->buckets[13]);
 
         printf("----\n");
-        print_hashmap(hm);
+        hashmap_print(hm);
         printf("----\n");
 
-        hashmap_remove(hm, "ll3");
+        //hashmap_remove(hm, "ll3");
 
         printf("----\n");
-        print_hashmap(hm);
+        hashmap_print(hm);
 
         printf("----\n");
         //print_bucket(dup);
 
 
-        free_hashmap(hm);
+        hashmap_free(hm);
 }

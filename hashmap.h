@@ -17,6 +17,11 @@
  * each internal action, not recommended */
 // #define HM_DEBUG
 
+/* if enabled this will not trust the hash function.
+ * It will search every item in the hashmap (after trying
+ * the hashing method). */
+// #define HM_DONTTRUSTHASH
+
 /*
  * if using structs as values, this conveniently
  * typecasts your struct's free function
@@ -33,30 +38,24 @@ struct bucket {
         uint32_t hash;
         char *key;
         void *val;
-        void (*val_free_func)(void *);
 
         /* collisions are stored as linked lists */
         struct bucket *next;
 };
 
 struct hashmap {
-       struct bucket **buckets;
-       size_t n_buckets;
-       size_t capacity;
+        struct bucket **buckets;
+        size_t n_buckets;
+        size_t capacity;
+        void (*val_free_func)(void *);
 };
 
-struct bucket *new_bucket(const char *key, void *val,
-                void (*val_free_func)(void *));
-struct hashmap *new_hashmap(void);
-void free_bucket(struct bucket *b);
-void free_hashmap(struct hashmap *hm);
+struct hashmap *hashmap_new(void (*val_free_func)(void *));
+void hashmap_free(struct hashmap *hm);
 int hashmap_resize(struct hashmap *hm);
-int hashmap_insert(struct hashmap *hm, struct bucket *b);
+int hashmap_insert(struct hashmap *hm, const char *key, void *val);
 void *hashmap_get(struct hashmap *hm, const char *key);
 int hashmap_remove(struct hashmap *hm, const char *key);
-
-#ifdef HM_DEBUG
-void print_hashmap(struct hashmap *hm);
-#endif
+void hashmap_print(struct hashmap *hm);
 
 #endif  /* HASHMAP_H */
