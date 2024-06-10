@@ -137,6 +137,7 @@ int hashmap_resize(struct hashmap *hm)
         size_t new_size = hm->capacity * HM_RESIZE_SCALE_FACTOR;
         debug_print("resizing hashmap from size %ld to %ld...\n", hm->capacity,
                         new_size);
+
         struct bucket **buckets = HM_CALLOC_FUNC(new_size,
                         sizeof(struct bucket *));
         if (hm_check_mem(buckets))
@@ -146,14 +147,38 @@ int hashmap_resize(struct hashmap *hm)
                 if (hm->buckets[i] == NULL)
                         continue;
 
-                size_t new_idx = hm->buckets[i]->hash % (uint32_t)new_size;
+                struct bucket *target = hm->buckets[i];
+                struct bucket *curr;
+                while (target != NULL) {
+                        curr = target;
+                        target = target->next;
+
+                        size_t curr_new_idx = curr->hash % (uint32_t)(new_size);
+
+                        printf("%s\n", curr->key);
+                        if (buckets[curr_new_idx] == NULL) {
+                                buckets[curr_new_idx] = curr;
+                                buckets[curr_new_idx]->next = NULL;
+                                continue;
+                        }
+
+                        /* collision */
+
+                        struct bucket *ptr = buckets[curr_new_idx];
+                        while (ptr->next != NULL)
+                                ptr = ptr->next;
+
+                        ptr->next = curr;
+                        ptr->next->next = NULL;
+                }
+
+                /* size_t new_idx = hm->buckets[i]->hash % (uint32_t)new_size;
                 debug_print("buckets at idx %ld move to idx %ld\n", i, new_idx);
                 if (buckets[new_idx] != NULL) {
-                        debug_print("collision when resizing hashmap. this should never happen...\n");
                         free(buckets);
                         return 1;
                 }
-                buckets[new_idx] = hm->buckets[i];
+                buckets[new_idx] = hm->buckets[i]; */
         }
 
         free(hm->buckets);
