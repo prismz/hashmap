@@ -155,7 +155,6 @@ int hashmap_resize(struct hashmap *hm)
 
                         size_t curr_new_idx = curr->hash % (uint32_t)(new_size);
 
-                        printf("%s\n", curr->key);
                         if (buckets[curr_new_idx] == NULL) {
                                 buckets[curr_new_idx] = curr;
                                 buckets[curr_new_idx]->next = NULL;
